@@ -138,11 +138,11 @@ button{font:inherit;cursor:pointer}
   <div class="cam" id="x-cam"><div class="v"><video id="x-vid" playsinline muted></video></div><div class="ring"></div></div>
   <div class="col">
     <div class="row" style="background:#1E2740;border-radius:12px;padding:10px 14px;font-size:13px;font-weight:600" id="x-s1">1. Hadap lurus ke kamera</div>
-    <div class="row" style="background:#1E2740;border-radius:12px;padding:10px 14px;font-size:13px;font-weight:600" id="x-s2">2. Gerakan keamanan</div>
+    <div class="row" style="background:#1E2740;border-radius:12px;padding:10px 14px;font-size:13px;font-weight:600" id="x-s2">2. Tekan tombol Scan Wajah</div>
     <div class="row" style="background:#1E2740;border-radius:12px;padding:10px 14px;font-size:13px;font-weight:600" id="x-s3">3. Verifikasi wajah</div>
   </div>
   <div class="err" id="x-err"></div>
-  <div class="col" style="margin-top:auto"><div class="pb"><i id="x-pb"></i></div><p style="text-align:center;font-size:12.5px">Proses pengenalan berjalan di HP Anda. Hanya angka vektor wajah yang dikirim.</p><button class="btn gold" id="x-retry" style="display:none">Coba lagi</button></div>
+  <div class="col" style="margin-top:auto"><div class="pb"><i id="x-pb"></i></div><p style="text-align:center;font-size:12.5px">Proses pengenalan berjalan di HP Anda. Hanya angka vektor wajah yang dikirim.</p><button class="btn gold" id="x-shot" disabled style="display:none">Scan Wajah</button><button class="btn gold" id="x-retry" style="display:none">Coba lagi</button></div>
 </section>
 
 <!-- HASIL -->
@@ -199,7 +199,7 @@ function showErr(id, m) { var e = $(id); e.textContent = m || ''; e.classList.to
 function busy(on) { $('load').classList.toggle('on', !!on); }
 
 // GANTI dengan URL Web App Apps Script Anda (berakhiran /exec)
-var API_URL = 'https://script.google.com/macros/s/AKfycbzN5NEWm15AG44ijVJg1O_ae-Ftpa1VPpP_DybLvuDaK-6XQW7nXduGU6zDcSxKax_7/exec';
+var API_URL = 'https://script.google.com/macros/s/AKfycbzYo72Z-I9tPNx06t5Z2UOHQAPcaR4ywrkRU8C5eVRj670lKxJzgc0gU0udyPERudKP/exec';
 
 function api(action, payload, noBusy) {
   payload = payload || {};
@@ -416,9 +416,9 @@ function step(id, st, txt) {
 }
 function startScan(tipe) {
   show('scan'); stopScan = false; geo = null;
-  showErr('x-err', ''); $('x-retry').style.display = 'none'; $('x-pb').style.width = '0';
+  showErr('x-err', ''); $('x-retry').style.display = 'none'; $('x-shot').style.display = 'none'; $('x-pb').style.width = '0';
   $('x-sub').textContent = 'Absen ' + tipe + ' - Shift ' + S.me.shift;
-  step('x-s1', 'on', '1. Hadap lurus ke kamera'); step('x-s2', 'wait', '2. Gerakan keamanan'); step('x-s3', 'wait', '3. Verifikasi wajah');
+  step('x-s1', 'on', '1. Hadap lurus ke kamera'); step('x-s2', 'wait', '2. Tekan tombol Scan Wajah'); step('x-s3', 'wait', '3. Verifikasi wajah');
   $('x-geo').className = 'chip w'; $('x-geo').textContent = 'Mencari GPS...';
   var geoP = getGeo().then(function (g) { geo = g; $('x-geo').className = 'chip'; $('x-geo').textContent = 'GPS +/-' + g.acc + ' m'; return g; })
     .catch(function (e) { $('x-geo').className = 'chip b'; $('x-geo').textContent = 'GPS gagal'; throw e; });
@@ -429,43 +429,59 @@ function startScan(tipe) {
     return;
   }
   $('x-cam').style.display = '';
-  var challenge = ['kedip', 'kanan', 'kiri'][Math.floor(Math.random() * 3)];
-  var label = { kedip: 'Kedipkan mata dua kali', kanan: 'Tengok ke kanan', kiri: 'Tengok ke kiri' }[challenge];
-  Promise.all([loadModels(), startCam($('x-vid'))]).then(function () { return scanLoop(challenge, label); })
+  $('x-shot').style.display = 'flex'; $('x-shot').disabled = true; $('x-shot').textContent = 'Scan Wajah';
+  $('x-title').textContent = 'Memuat kamera...';
+  Promise.all([loadModels(), startCam($('x-vid'))]).then(function () { return waitScan(); })
     .then(function (res) { if (!res) return; step('x-s3', 'on', '3. Memeriksa wajah...'); return geoP.then(function () { return submit(tipe, res); }); })
     .catch(function (e) { scanFail(e.error || 'Gagal.'); });
 }
-function scanLoop(challenge, label) {
-  var v = $('x-vid'), t0 = Date.now(), phase = 'front', front = 0, blinks = 0, closed = false, stable = 0, passedAt = 0;
-  $('x-title').textContent = 'Hadap lurus';
+function waitScan() {
+  var v = $('x-vid'), btn = $('x-shot'), t0 = Date.now(), stable = 0, scanning = false, done = false;
+  function posOK(r) {
+    if (!faceOK(r, v)) return false;
+    var y = yaw(r), b = r.detection.box, cx = (b.x + b.width / 2) / v.videoWidth, cy = (b.y + b.height / 2) / v.videoHeight;
+    return y > 0.38 && y < 0.62 && cx > 0.3 && cx < 0.7 && cy > 0.25 && cy < 0.75;
+  }
+  function msg(r) {
+    if (!faceOK(r, v)) return r ? 'Dekatkan wajah ke kamera' : 'Posisikan wajah di lingkaran';
+    var y = yaw(r); if (y <= 0.38 || y >= 0.62) return 'Hadap lurus ke kamera';
+    return 'Pusatkan wajah di lingkaran';
+  }
   return new Promise(function (resolve, reject) {
+    btn.onclick = function () {
+      if (btn.disabled || scanning) return;
+      scanning = true; btn.disabled = true; btn.textContent = 'Memindai...';
+      $('x-title').textContent = 'Tahan, jangan bergerak'; $('x-pb').style.width = '70%';
+      var tries = 0;
+      (function grab() {
+        detect(v, true).then(function (rr) {
+          if (posOK(rr)) { done = true; $('x-pb').style.width = '85%'; return resolve({ descriptor: Array.prototype.slice.call(rr.descriptor), selfie: snap(v) }); }
+          throw new Error('retry');
+        }).catch(function () {
+          if (++tries < 4) return setTimeout(grab, 150);
+          scanning = false; stable = 0; btn.textContent = 'Scan Wajah'; $('x-pb').style.width = '20%'; $('x-title').textContent = 'Wajah belum terbaca, coba lagi';
+        });
+      })();
+    };
     (function loop() {
-      if (stopScan || !$('s-scan').classList.contains('on')) return resolve(null);
-      if (Date.now() - t0 > 30000) return reject({ error: 'Waktu habis. Coba lagi.' });
+      if (done) return;
+      if (stopScan || !$('s-scan').classList.contains('on')) { done = true; return resolve(null); }
+      if (Date.now() - t0 > 60000) { done = true; return reject({ error: 'Waktu habis. Coba lagi.' }); }
+      if (scanning) return setTimeout(loop, 150);
       detect(v, false).then(function (r) {
-        var ok = faceOK(r, v); $('x-cam').classList.toggle('ok', ok);
-        if (!ok) { $('x-title').textContent = 'Posisikan wajah di lingkaran'; return; }
-        var y = yaw(r), frontal = y > 0.42 && y < 0.58;
-        if (phase === 'front') {
-          if (frontal) { front++; $('x-pb').style.width = '20%'; if (front >= 3) { phase = 'challenge'; step('x-s1', 'done', '1. Wajah terdeteksi'); step('x-s2', 'on', '2. ' + label); $('x-title').textContent = label; } }
-          else { front = 0; $('x-title').textContent = 'Hadap lurus ke kamera'; }
-        } else if (phase === 'challenge') {
-          var pass = false;
-          if (challenge === 'kedip') { var e = eyeEAR(r); if (e < 0.21) closed = true; else if (closed && e > 0.26) { closed = false; blinks++; } pass = blinks >= 2; }
-          else if (challenge === 'kanan') pass = y < 0.36;
-          else pass = y > 0.64;
-          $('x-pb').style.width = (pass ? 60 : 40) + '%';
-          if (pass) { phase = 'capture'; step('x-s2', 'done', '2. ' + label); $('x-title').textContent = 'Tahan, hadap lurus'; }
-        } else if (phase === 'capture') {
-          if (frontal) { stable++; if (stable >= 2) { phase = 'done'; return detect(v, true).then(function (rr) { if (!faceOK(rr, v)) { phase = 'capture'; stable = 0; return; } $('x-pb').style.width = '85%'; resolve({ descriptor: Array.prototype.slice.call(rr.descriptor), selfie: snap(v) }); }); } } else stable = 0;
-        }
-      }).catch(function () {}).then(function () { if (phase !== 'done') setTimeout(loop, 60); });
+        var ok = posOK(r); $('x-cam').classList.toggle('ok', ok);
+        stable = ok ? stable + 1 : 0;
+        var ready = stable >= 2;
+        btn.disabled = !ready;
+        if (ready) { step('x-s1', 'done', '1. Wajah siap'); step('x-s2', 'on', '2. Tekan tombol Scan Wajah'); $('x-title').textContent = 'Wajah siap, tekan Scan'; $('x-pb').style.width = '40%'; }
+        else { step('x-s1', 'on', '1. Hadap lurus ke kamera'); step('x-s2', 'wait', '2. Tekan tombol Scan Wajah'); $('x-title').textContent = msg(r); $('x-pb').style.width = '15%'; }
+      }).catch(function () {}).then(function () { setTimeout(loop, 120); });
     })();
   });
 }
 function submit(tipe, res) {
   var payload = { tipe: tipe, lat: geo ? geo.lat : null, lng: geo ? geo.lng : null, acc: geo ? geo.acc : null };
-  if (res) { payload.descriptor = res.descriptor; payload.selfie = res.selfie; payload.liveness = true; }
+  if (res) { payload.descriptor = res.descriptor; payload.selfie = res.selfie; }
   stopCam();
   return api('absen', payload).then(function (r) {
     S.me = r.me; $('x-pb').style.width = '100%';
@@ -478,7 +494,7 @@ function submit(tipe, res) {
   }).catch(function (e) { scanFail(e.error); });
 }
 function scanFail(m) {
-  stopCam(); showErr('x-err', m); $('x-title').textContent = 'Belum berhasil'; $('x-retry').style.display = 'flex';
+  stopCam(); $('x-shot').style.display = 'none'; showErr('x-err', m); $('x-title').textContent = 'Belum berhasil'; $('x-retry').style.display = 'flex';
   $('x-retry').onclick = function () { startScan(S.me.today.masuk ? 'Pulang' : 'Masuk'); };
 }
 $('x-close').onclick = function () { stopScan = true; renderHome(); };
